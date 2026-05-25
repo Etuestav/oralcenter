@@ -2,7 +2,7 @@ FROM php:8.3-apache
 
 # Instalar extensiones PHP necesarias
 RUN apt-get update && apt-get install -y \
-    gettext \
+    libicu-dev \
     libgd-dev \
     libzip-dev \
     git \
