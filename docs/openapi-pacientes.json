@@ -1,0 +1,448 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "OralCenter API - Pacientes y Citas",
+    "version": "1.0.0",
+    "description": "API REST para que pacientes ingresen al sistema, consulten disponibilidad y soliciten/gestionen sus citas desde Android."
+  },
+  "servers": [
+    {
+      "url": "http://localhost/OralCenter/api",
+      "description": "Servidor local WAMP"
+    }
+  ],
+  "paths": {
+    "/paciente/register": {
+      "post": {
+        "summary": "Registrar paciente desde la app",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Paciente registrado y token emitido"
+          },
+          "409": {
+            "description": "DNI ya registrado"
+          },
+          "422": {
+            "description": "Datos incompletos"
+          }
+        }
+      }
+    },
+    "/paciente/login": {
+      "post": {
+        "summary": "Login de paciente",
+        "description": "Valida al paciente contra la tabla paciente usando DNI y fecha de nacimiento.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PacienteLoginRequest"
+              },
+              "example": {
+                "dni": "466606466",
+                "fecha_nacimiento": "1987-09-17",
+                "device_name": "Android"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login correcto",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credenciales invalidas"
+          },
+          "422": {
+            "description": "Datos incompletos"
+          }
+        }
+      }
+    },
+    "/paciente/perfil": {
+      "get": {
+        "summary": "Obtener perfil del paciente autenticado",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Perfil del paciente"
+          },
+          "401": {
+            "description": "Token invalido o expirado"
+          }
+        }
+      },
+      "put": {
+        "summary": "Actualizar perfil del paciente",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PerfilUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Perfil actualizado"
+          }
+        }
+      }
+    },
+    "/especialidades": {
+      "get": {
+        "summary": "Listar especialidades activas",
+        "responses": {
+          "200": {
+            "description": "Lista de especialidades"
+          }
+        }
+      }
+    },
+    "/medicos": {
+      "get": {
+        "summary": "Listar medicos activos",
+        "parameters": [
+          {
+            "name": "especialidad",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de medicos"
+          }
+        }
+      }
+    },
+    "/disponibilidad": {
+      "get": {
+        "summary": "Consultar horarios disponibles",
+        "parameters": [
+          {
+            "name": "fecha",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "2026-05-19"
+            }
+          },
+          {
+            "name": "medico",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "especialidad",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de horas con bandera disponible"
+          }
+        }
+      }
+    },
+    "/citas": {
+      "get": {
+        "summary": "Listar citas del paciente",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["proximas", "historial"],
+              "default": "proximas"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Citas del paciente"
+          }
+        }
+      },
+      "post": {
+        "summary": "Solicitar cita",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CitaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Cita solicitada"
+          },
+          "409": {
+            "description": "Horario no disponible o paciente con cita activa ese dia"
+          }
+        }
+      }
+    },
+    "/citas/{id}": {
+      "put": {
+        "summary": "Reprogramar o actualizar cita",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CitaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cita actualizada"
+          }
+        }
+      }
+    },
+    "/citas/{id}/cancelar": {
+      "post": {
+        "summary": "Cancelar cita del paciente",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cita cancelada"
+          }
+        }
+      }
+    },
+    "/paciente/logout": {
+      "post": {
+        "summary": "Cerrar sesion del paciente",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sesion cerrada"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Token"
+      }
+    },
+    "schemas": {
+      "PacienteLoginRequest": {
+        "type": "object",
+        "required": ["dni", "fecha_nacimiento"],
+        "properties": {
+          "dni": {
+            "type": "string"
+          },
+          "fecha_nacimiento": {
+            "type": "string",
+            "format": "date"
+          },
+          "device_name": {
+            "type": "string"
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["nombres", "apellidos", "dni", "fecha_nacimiento", "telefono"],
+        "properties": {
+          "nombres": {
+            "type": "string"
+          },
+          "apellidos": {
+            "type": "string"
+          },
+          "dni": {
+            "type": "string"
+          },
+          "fecha_nacimiento": {
+            "type": "string",
+            "format": "date"
+          },
+          "telefono": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "direccion": {
+            "type": "string"
+          },
+          "sexo": {
+            "type": "string"
+          },
+          "device_name": {
+            "type": "string"
+          }
+        }
+      },
+      "PerfilUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "telefono": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "direccion": {
+            "type": "string"
+          },
+          "alergia": {
+            "type": "string"
+          },
+          "observacion": {
+            "type": "string"
+          }
+        }
+      },
+      "CitaRequest": {
+        "type": "object",
+        "required": ["fecha", "hora", "medico", "especialidad", "motivo"],
+        "properties": {
+          "fecha": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-05-19"
+          },
+          "hora": {
+            "type": "string",
+            "example": "09:30"
+          },
+          "medico": {
+            "type": "integer",
+            "example": 15
+          },
+          "especialidad": {
+            "type": "integer",
+            "example": 4
+          },
+          "motivo": {
+            "type": "string",
+            "example": "Dolor dental"
+          },
+          "observacion": {
+            "type": "string"
+          }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "token_type": {
+            "type": "string",
+            "example": "Bearer"
+          },
+          "access_token": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "paciente": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

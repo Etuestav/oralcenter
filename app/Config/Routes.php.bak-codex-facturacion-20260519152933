@@ -1,0 +1,300 @@
+<?php
+
+use CodeIgniter\Router\RouteCollection;
+
+/**
+ * @var RouteCollection $routes
+ */
+$routes->get('/', 'Auth::index');
+$routes->get('dashboard', 'Dashboard::index');
+$routes->get('regtuto', 'RegTuto::index');
+$routes->get('Regtuto', 'RegTuto::index');
+$routes->post('auth', 'Auth::login');
+$routes->get('logout', 'Auth::logout');
+
+$routes->group('regpersona', static function (RouteCollection $routes): void {
+    $routes->get('/', 'Regpersona::index');
+    $routes->get('validaEmail', 'Regpersona::validaEmail');
+    $routes->post('guardarusuario', 'Regpersona::guardarUsuario');
+});
+
+$routes->group('api', static function (RouteCollection $routes): void {
+    $routes->get('docs/usuarios/openapi.json', 'api\DocsApi::usuarios');
+    $routes->get('docs/pacientes/openapi.json', 'api\DocsApi::pacientes');
+    $routes->post('usuarios/login', 'api\UsuarioApi::login');
+    $routes->get('usuarios/me', 'api\UsuarioApi::me');
+    $routes->post('usuarios/logout', 'api\UsuarioApi::logout');
+    $routes->post('paciente/register', 'api\PacienteApi::register');
+    $routes->post('paciente/login', 'api\PacienteApi::login');
+    $routes->post('paciente/logout', 'api\PacienteApi::logout');
+    $routes->get('medico/agenda', 'api\MedicoApi::agenda');
+    $routes->get('medico/pacientes', 'api\MedicoApi::pacientes');
+    $routes->get('medico/disponibilidad', 'api\MedicoApi::disponibilidad');
+    $routes->post('medico/citas/(:num)/estado', 'api\MedicoApi::cambiarEstado/$1');
+    $routes->get('paciente/perfil', 'api\PacienteApi::perfil');
+    $routes->put('paciente/perfil', 'api\PacienteApi::actualizarPerfil');
+    $routes->get('especialidades', 'api\PacienteApi::especialidades');
+    $routes->get('medicos', 'api\PacienteApi::medicos');
+    $routes->get('disponibilidad', 'api\PacienteApi::disponibilidad');
+    $routes->get('citas', 'api\PacienteApi::citas');
+    $routes->post('citas', 'api\PacienteApi::crearCita');
+    $routes->put('citas/(:num)', 'api\PacienteApi::actualizarCita/$1');
+    $routes->post('citas/(:num)/cancelar', 'api\PacienteApi::cancelarCita/$1');
+});
+
+$routes->group('reportes', static function (RouteCollection $routes): void {
+    $routes->get('/', 'reportes\Redashboard::index');
+    $routes->get('redashboard', 'reportes\Redashboard::index');
+    $routes->post('getData', 'reportes\Redashboard::getData');
+    $routes->post('redashboard/getData', 'reportes\Redashboard::getData');
+});
+
+$routes->group('cita', static function (RouteCollection $routes): void {
+    $routes->get('/', 'citas\Agenda::index');
+    $routes->get('registrar', 'citas\Registrar::index');
+    $routes->post('medicos', 'citas\Registrar::getMedicos');
+    $routes->get('dia', 'citas\Registrar::getCitaDia');
+    $routes->get('pacientes', 'citas\Registrar::getPacientes');
+    $routes->post('validar-paciente', 'citas\Registrar::validaPacienteUnico');
+    $routes->post('guardar', 'citas\Registrar::guardarCita');
+    $routes->post('editar', 'citas\Registrar::editarCita');
+    $routes->get('calendario', 'citas\Agenda::calendario');
+    $routes->get('semana/(:any)', 'citas\Agenda::citasDeSemana/$1');
+    $routes->get('getCita/(:num)', 'citas\Agenda::getCita/$1');
+    $routes->get('estadoCuenta/(:num)', 'citas\Agenda::estadoCuenta/$1');
+});
+
+$routes->group('paciente', static function (RouteCollection $routes): void {
+    $routes->get('/', 'mantenimiento\Paciente::index');
+    $routes->get('nuevo', 'mantenimiento\Paciente::add');
+    $routes->post('guardar', 'mantenimiento\Paciente::guardar');
+    $routes->get('editar/(:num)', 'mantenimiento\Paciente::editarPaciente/$1');
+    $routes->post('update', 'mantenimiento\Paciente::pacienteUpdate');
+    $routes->get('eliminar', 'mantenimiento\Paciente::anularPaciente');
+    $routes->get('anularPaciente', 'mantenimiento\Paciente::anularPaciente');
+    $routes->get('jsonpaciente', 'mantenimiento\Paciente::jsonPaciente');
+    $routes->get('getProvincias', 'mantenimiento\Paciente::getProvincias');
+    $routes->get('getDistritos', 'mantenimiento\Paciente::getDistritos');
+});
+
+$routes->group('historia', static function (RouteCollection $routes): void {
+    $routes->get('/', 'historia\Movimiento::index');
+    $routes->get('ver/(:num)', 'historia\Movimiento::historia/$1');
+    $routes->get('listar/(:num)', 'historia\Movimiento::historia/$1');
+    $routes->get('jsonHistoriaClinica', 'historia\Movimiento::jsonHistoriaClinica');
+    $routes->post('guardarDatosPaciente', 'historia\Movimiento::guardarDatosPaciente');
+    $routes->post('guardarPacienteEnfermedad', 'historia\Movimiento::guardarPacienteEnfermedad');
+    $routes->post('guardarPacienteConsulta', 'historia\Movimiento::guardarPacienteConsulta');
+    $routes->post('guardarPacienteExploracion', 'historia\Movimiento::guardarPacienteExploracion');
+    $routes->get('jsonAlergias', 'historia\Movimiento::jsonAlergias');
+    $routes->post('jsonCitasHistoria', 'historia\Movimiento::jsonCitasHistoria');
+    $routes->post('jsonEvolucion', 'historia\Movimiento::jsonEvolucion');
+    $routes->post('agregarEvolucion', 'historia\Movimiento::agregarEvolucion');
+    $routes->get('getEvolucion', 'historia\Movimiento::getEvolucion');
+    $routes->match(['GET', 'POST'], 'getMedicos', 'historia\Movimiento::getMedicos');
+    $routes->match(['GET', 'POST'], 'getMedicosHistoria', 'historia\Movimiento::getMedicosHistoria');
+    $routes->post('editarEvolucion', 'historia\Movimiento::editarEvolucion');
+    $routes->get('anularEvolucion', 'historia\Movimiento::anularEvolucion');
+    $routes->post('agregarAlergia', 'historia\Movimiento::agregarAlergia');
+    $routes->get('getAlergia', 'historia\Movimiento::getAlergia');
+    $routes->post('editarAlergia', 'historia\Movimiento::editarAlergia');
+    $routes->get('anularAlergia', 'historia\Movimiento::anularAlergia');
+    $routes->post('jsonDiagnostico', 'historia\Movimiento::jsonDiagnostico');
+    $routes->post('agregarDiagnostico', 'historia\Movimiento::agregarDiagnostico');
+    $routes->get('getDiagnosticos', 'historia\Movimiento::getDiagnosticos');
+    $routes->post('editarDiagnostico', 'historia\Movimiento::editarDiagnostico');
+    $routes->get('anularDiagnostico', 'historia\Movimiento::anularDiagnostico');
+    $routes->post('jsonPlacas', 'historia\Movimiento::jsonPlacas');
+    $routes->post('subir', 'historia\Movimiento::subir');
+    $routes->post('agregarPlaca', 'historia\Movimiento::agregarPlaca');
+    $routes->get('getPlaca', 'historia\Movimiento::getPlaca');
+    $routes->post('editarPlaca', 'historia\Movimiento::editarPlaca');
+    $routes->get('anularPlaca', 'historia\Movimiento::anularPlaca');
+    $routes->get('getCitaHistoria', 'historia\Movimiento::getCitaHistoria');
+    $routes->post('editarCitaHistoria', 'historia\Movimiento::editarCitaHistoria');
+    $routes->post('jsonHistratamiento', 'historia\Movimiento::jsonHistratamiento');
+    $routes->get('getOdontograma', 'historia\Movimiento::getOdontograma');
+    $routes->get('getHallazgo', 'historia\Movimiento::getHallazgo');
+    $routes->get('getHallazgosDientePaciente', 'historia\Movimiento::getHallazgosDientePaciente');
+    $routes->post('agregarHallazgo', 'historia\Movimiento::agregarHallazgo');
+    $routes->post('eliminarHallazgo', 'historia\Movimiento::eliminarHallazgo');
+    $routes->post('guardarImagenOdontograma', 'historia\Movimiento::guardarImagenOdontograma');
+    $routes->post('guardarDetalleOdontograma', 'historia\Movimiento::guardarDetalleOdontograma');
+    $routes->post('cambiarTipoOdontograma', 'historia\Movimiento::cambiarTipoOdontograma');
+    $routes->get('imprimirLista', 'historia\Movimiento::imprimirLista');
+    $routes->get('imprimirHistoria/(:num)', 'historia\Movimiento::imprimirHistoria/$1');
+});
+
+$routes->group('tratamiento', static function (RouteCollection $routes): void {
+    $routes->get('/', 'tratamientos\Panel::index');
+    $routes->get('nuevo', 'tratamientos\Panel::nuevo');
+    $routes->get('editar/(:num)', 'tratamientos\Panel::editar/$1');
+    $routes->post('editarGuardarTratamiento', 'tratamientos\Panel::editarGuardarTratamiento');
+    $routes->get('jsontratamiento', 'tratamientos\Panel::jsonTratamientos');
+    $routes->get('getDocumento', 'tratamientos\Panel::getDocumento');
+    $routes->get('getProcedimiento', 'tratamientos\Panel::getProcedimiento');
+    $routes->post('guardarTratamiento', 'tratamientos\Panel::guardarTratamiento');
+    $routes->get('anularTratamiento', 'tratamientos\Panel::anularTratamiento');
+    $routes->get('nuevoPago/(:num)', 'tratamientos\Panel::nuevoPago/$1');
+    $routes->get('getPagoCuotas', 'tratamientos\Panel::getPagoCuotas');
+    $routes->post('guardarPago', 'tratamientos\Panel::guardarPago');
+    $routes->get('pagarCuota/(:num)', 'tratamientos\Panel::pagarCuota/$1');
+    $routes->post('pagarCuotaGuardar', 'tratamientos\Panel::pagarCuotaGuardar');
+    $routes->get('imprimirListaTratamiento', 'tratamientos\Panel::imprimirListaTratamientos');
+    $routes->get('imprimirTratamiento/(:num)', 'tratamientos\Panel::imprimirTratamiento/$1');
+    $routes->get('imprimirComprobante/(:num)', 'tratamientos\Panel::imprimirComprobante/$1');
+    $routes->get('comprobante', 'tratamientos\Comprobantes::index');
+    $routes->get('jsonComprobantes', 'tratamientos\Comprobantes::jsonComprobantes');
+    $routes->get('comprobante/imprimirLista', 'tratamientos\Comprobantes::imprimirLista');
+    $routes->get('comprobante/anularcomprobante', 'tratamientos\Comprobantes::anularComprobante');
+});
+
+$routes->group('facturacion/electronica', static function (RouteCollection $routes): void {
+    $routes->get('/', 'facturacion\Electronica::index');
+    $routes->get('nuevo', 'facturacion\Electronica::nuevo');
+    $routes->post('guardar', 'facturacion\Electronica::guardar');
+    $routes->get('desdeComprobante/(:num)', 'facturacion\Electronica::desdeComprobante/$1');
+    $routes->get('ver/(:num)', 'facturacion\Electronica::ver/$1');
+    $routes->get('generarXml/(:num)', 'facturacion\Electronica::generarXml/$1');
+    $routes->get('firmarXml/(:num)', 'facturacion\Electronica::firmarXml/$1');
+    $routes->get('descargarXml/(:num)', 'facturacion\Electronica::descargarXml/$1');
+    $routes->get('paciente/(:num)', 'facturacion\Electronica::getPaciente/$1');
+    $routes->get('configuracion', 'facturacion\Electronica::configuracion');
+    $routes->post('configuracion/guardar', 'facturacion\Electronica::guardarConfiguracion');
+});
+
+$maintenanceRoutes = [
+    'alergia'       => ['controller' => 'Alergia', 'json' => 'jsonAlergia'],
+    'banco'         => ['controller' => 'Banco', 'json' => 'jsonBanco'],
+    'categoria'     => ['controller' => 'Categoria', 'json' => 'jsonCategoria'],
+    'citado'        => ['controller' => 'Citado', 'json' => 'jsonCitado'],
+    'concepto'      => ['controller' => 'Concepto', 'json' => 'jsonConcepto'],
+    'diagnostico'   => ['controller' => 'Diagnostico', 'json' => 'jsonDiagnostico'],
+    'especialidad'  => ['controller' => 'Especialidad', 'json' => 'jsonEspecialidad'],
+    'medida'        => ['controller' => 'Medida', 'json' => 'jsonMedida'],
+    'moneda'        => ['controller' => 'Moneda', 'json' => 'jsonMoneda'],
+    'pago'          => ['controller' => 'Pago', 'json' => 'jsonPago'],
+    'tarjeta'       => ['controller' => 'Tarjeta', 'json' => 'jsonTarjeta'],
+    'tipodocumento' => ['controller' => 'Tipodocumento', 'json' => 'jsonDocumento'],
+];
+
+foreach ($maintenanceRoutes as $segment => $config) {
+    $controller = $config['controller'];
+    $json = $config['json'];
+
+    $routes->group($segment, static function (RouteCollection $routes) use ($controller, $json): void {
+        $routes->get('/', "mantenimiento\\{$controller}::index");
+        $routes->get('nuevo', "mantenimiento\\{$controller}::nuevo");
+        $routes->post('guardar', "mantenimiento\\{$controller}::guardar");
+        $routes->get('editar/(:any)', "mantenimiento\\{$controller}::editar/$1");
+        $routes->post('update', "mantenimiento\\{$controller}::update");
+        $routes->get('anular', "mantenimiento\\{$controller}::anular");
+        $routes->get(strtolower($json), "mantenimiento\\{$controller}::{$json}");
+        $routes->get($json, "mantenimiento\\{$controller}::{$json}");
+    });
+}
+
+$routes->group('area', static function (RouteCollection $routes): void {
+    $routes->get('/', 'mantenimiento\Area::index');
+    $routes->post('nuevo', 'mantenimiento\Area::areaAdd');
+    $routes->post('update', 'mantenimiento\Area::areaUpdate');
+    $routes->get('editar/(:num)', 'mantenimiento\Area::areaEdit/$1');
+    $routes->get('eliminar/(:num)', 'mantenimiento\Area::delete/$1');
+    $routes->post('eliminar/(:num)', 'mantenimiento\Area::delete/$1');
+    $routes->get('jsonarea', 'mantenimiento\Area::jsonArea');
+});
+
+$routes->get('mantenimiento/area', 'mantenimiento\Area::index');
+
+$routes->group('medico', static function (RouteCollection $routes): void {
+    $routes->get('/', 'mantenimiento\Medico::index');
+    $routes->get('nuevo', 'mantenimiento\Medico::nuevo');
+    $routes->post('guardar', 'mantenimiento\Medico::guardar');
+    $routes->get('editar/(:num)', 'mantenimiento\Medico::editar/$1');
+    $routes->post('update', 'mantenimiento\Medico::update');
+    $routes->get('anularMedico', 'mantenimiento\Medico::anularMedico');
+    $routes->get('jsonmedico', 'mantenimiento\Medico::jsonMedicos');
+});
+
+$routes->group('tarifario', static function (RouteCollection $routes): void {
+    $routes->get('/', 'mantenimiento\Tarifario::index');
+    $routes->get('nuevo', 'mantenimiento\Tarifario::nuevo');
+    $routes->post('guardar', 'mantenimiento\Tarifario::guardar');
+    $routes->get('editar/(:num)', 'mantenimiento\Tarifario::editar/$1');
+    $routes->post('update', 'mantenimiento\Tarifario::update');
+    $routes->get('anularpago', 'mantenimiento\Tarifario::anularPago');
+    $routes->get('jsontarifario', 'mantenimiento\Tarifario::jsonTarifario');
+});
+
+$routes->group('usuario', static function (RouteCollection $routes): void {
+    $routes->get('/', 'mantenimiento\Usuario::index');
+    $routes->get('perfil', 'mantenimiento\Usuario::perfil');
+    $routes->post('perfil/update', 'mantenimiento\Usuario::actualizarPerfil');
+    $routes->get('add', 'mantenimiento\Usuario::add');
+    $routes->post('user_add', 'mantenimiento\Usuario::userAdd');
+    $routes->post('userAdd', 'mantenimiento\Usuario::userAdd');
+    $routes->get('getUsuario', 'mantenimiento\Usuario::getUsuario');
+    $routes->post('editUsuario', 'mantenimiento\Usuario::editUsuario');
+    $routes->get('anularUsuario', 'mantenimiento\Usuario::anularUsuario');
+    $routes->get('jsonUsu', 'mantenimiento\Usuario::jsonUsu');
+});
+
+$routes->group('rol', static function (RouteCollection $routes): void {
+    $routes->get('/', 'mantenimiento\Rol::index');
+    $routes->get('add', 'mantenimiento\Rol::add');
+    $routes->post('rol_add', 'mantenimiento\Rol::rolAdd');
+    $routes->get('getRol', 'mantenimiento\Rol::getRol');
+    $routes->post('editRol', 'mantenimiento\Rol::editRol');
+    $routes->get('anularRol', 'mantenimiento\Rol::anularRol');
+    $routes->post('anularRol', 'mantenimiento\Rol::anularRol');
+    $routes->get('jsonRol', 'mantenimiento\Rol::jsonRol');
+});
+
+$routes->group('administrador', static function (RouteCollection $routes): void {
+    $routes->get('permisos', 'administrador\Permisos::index');
+    $routes->get('permisos/jsonPermisos', 'administrador\Permisos::jsonPermisos');
+    $routes->get('permisos/add', 'administrador\Permisos::add');
+    $routes->post('permisos/store', 'administrador\Permisos::store');
+    $routes->get('permisos/edit/(:num)', 'administrador\Permisos::edit/$1');
+    $routes->post('permisos/update', 'administrador\Permisos::update');
+    $routes->get('mensaje', 'administrador\Mensaje::index');
+    $routes->post('mensaje/guardar', 'administrador\Mensaje::guardar');
+});
+
+$routes->get('permiso', 'administrador\Permisos::index');
+$routes->get('permiso/jsonPermisos', 'administrador\Permisos::jsonPermisos');
+$routes->get('permiso/add', 'administrador\Permisos::add');
+$routes->post('permiso/store', 'administrador\Permisos::store');
+$routes->get('permiso/edit/(:num)', 'administrador\Permisos::edit/$1');
+$routes->post('permiso/update', 'administrador\Permisos::update');
+
+$routes->group('clinica', static function (RouteCollection $routes): void {
+    $routes->get('regclinica', 'clinica\Regclinica::index');
+    $routes->match(['GET', 'POST'], 'regclinica/jsonClinica', 'clinica\Regclinica::jsonClinica');
+    $routes->get('regclinica/ajax_edit/(:num)', 'clinica\Regclinica::ajaxEdit/$1');
+    $routes->post('regclinica/ajax_update', 'clinica\Regclinica::ajaxUpdate');
+});
+
+$routes->group('tramas/sistemas', static function (RouteCollection $routes): void {
+    $routes->get('registrartrama', 'Tramas\Sistemas\Registrartrama::index');
+    $routes->post('registrartrama/insertar', 'Tramas\Sistemas\Registrartrama::insertar');
+    $routes->get('listartrama', 'Tramas\Sistemas\Listartrama::index');
+    $routes->get('listartrama/listar_edit/(:num)', 'Tramas\Sistemas\Listartrama::listarEdit/$1');
+    $routes->post('listartrama/listar_update', 'Tramas\Sistemas\Listartrama::listarUpdate');
+});
+
+$routes->group('mantenimiento', static function (RouteCollection $routes): void {
+    $routes->get('ocurrencias', 'mantenimiento\Ocurrencias::index');
+    $routes->get('ocurrencias/add', 'mantenimiento\Ocurrencias::add');
+    $routes->post('ocurrencias/addOcurrencias', 'mantenimiento\Ocurrencias::addOcurrencias');
+    $routes->get('recibidos', 'mantenimiento\Recibidos::index');
+    $routes->get('recibidos/recibidos_edit/(:num)', 'mantenimiento\Recibidos::recibidosEdit/$1');
+    $routes->post('recibidos/recibido_update', 'mantenimiento\Recibidos::recibidoUpdate');
+    $routes->get('problema', 'mantenimiento\Problema::index');
+    $routes->post('problema/problema_add', 'mantenimiento\Problema::problemaAdd');
+    $routes->get('problema/problema_edit/(:num)', 'mantenimiento\Problema::problemaEdit/$1');
+    $routes->post('problema/problema_update', 'mantenimiento\Problema::problemaUpdate');
+});
+
+$routes->get('tipodocumento/getTipoDocumento', 'mantenimiento\Tipodocumento::getTipoDocumento');
+$routes->post('tipodocumento/editTipoDocumento', 'mantenimiento\Tipodocumento::editTipoDocumento');

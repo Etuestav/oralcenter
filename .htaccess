@@ -1,0 +1,33 @@
+# Disable directory browsing
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    Options +FollowSymlinks
+    RewriteEngine On
+    RewriteBase /OralCenter/
+
+    # The project root also belongs to the CI4 front controller.
+    RewriteRule ^$ public/index.php [L,QSA]
+
+    # Serve files that belong to CI4's public directory from clean URLs.
+    RewriteCond %{DOCUMENT_ROOT}/OralCenter/public/$1 -f [OR]
+    RewriteCond %{DOCUMENT_ROOT}/OralCenter/public/$1 -d
+    RewriteRule ^(.+)$ public/$1 [L]
+
+    # Keep existing project-level assets, like /vendor, directly accessible.
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Send every application route to CI4's front controller.
+    RewriteRule ^([\s\S]*)$ public/index.php/$1 [L,NC,QSA]
+
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+</IfModule>
+
+<IfModule !mod_rewrite.c>
+    ErrorDocument 404 public/index.php
+</IfModule>
+
+ServerSignature Off

@@ -1,0 +1,113 @@
+<div class="content-wrapper">
+  <section class="content-header">
+    <h1><i class="fa fa-file-text"></i> <?= esc($comprobante->serie . '-' . str_pad((string) $comprobante->correlativo, 8, '0', STR_PAD_LEFT)) ?></h1>
+    <ol class="breadcrumb">
+      <li><a href="<?= base_url('facturacion/electronica') ?>">Facturacion electronica</a></li>
+      <li class="active">Detalle</li>
+    </ol>
+  </section>
+
+  <?php if (session()->getFlashdata('success')): ?>
+    <script>
+      $(function () {
+        Swal.fire('Listo', '<?= esc(session()->getFlashdata('success')) ?>', 'success');
+      });
+    </script>
+  <?php endif; ?>
+  <?php if (session()->getFlashdata('error')): ?>
+    <script>
+      $(function () {
+        Swal.fire('Atencion', '<?= esc(session()->getFlashdata('error')) ?>', 'error');
+      });
+    </script>
+  <?php endif; ?>
+
+  <section class="content">
+    <div class="row">
+      <div class="col-md-12">
+        <div class="box box-info">
+          <div class="box-header with-border">
+            <a href="<?= base_url('facturacion/electronica') ?>" class="btn btn-default btn-sm"><i class="fa fa-hand-o-left"></i> Regresar</a>
+            <a href="<?= base_url('facturacion/electronica/generarXml/' . $comprobante->id_facturacion) ?>" class="btn btn-primary btn-sm"><i class="fa fa-code"></i> Generar XML</a>
+            <?php if (!empty($comprobante->xml_path)): ?>
+              <a href="<?= base_url('facturacion/electronica/firmarXml/' . $comprobante->id_facturacion) ?>" class="btn btn-warning btn-sm"><i class="fa fa-pencil-square-o"></i> Firmar XML</a>
+            <?php endif; ?>
+            <?php if (!empty($comprobante->xml_path)): ?>
+              <a href="<?= base_url('facturacion/electronica/enviarSunat/' . $comprobante->id_facturacion) ?>" class="btn btn-danger btn-sm"><i class="fa fa-send"></i> Enviar SUNAT</a>
+              <a href="<?= base_url('facturacion/electronica/descargarXml/' . $comprobante->id_facturacion) ?>" class="btn btn-success btn-sm"><i class="fa fa-download"></i> Descargar XML</a>
+            <?php endif; ?>
+            <?php if (!empty($comprobante->cdr_path)): ?>
+              <a href="<?= base_url('facturacion/electronica/descargarCdr/' . $comprobante->id_facturacion) ?>" class="btn btn-info btn-sm"><i class="fa fa-file-archive-o"></i> Descargar CDR</a>
+            <?php endif; ?>
+          </div>
+          <div class="box-body">
+            <div class="row">
+              <div class="col-md-3"><strong>Tipo</strong><br><?= $comprobante->tipo_comprobante === '01' ? 'Factura electronica' : 'Boleta electronica' ?></div>
+              <div class="col-md-3"><strong>Fecha</strong><br><?= esc($comprobante->fecha_emision) ?></div>
+              <div class="col-md-3"><strong>Estado interno</strong><br><span class="label label-info"><?= esc($comprobante->estado) ?></span></div>
+              <div class="col-md-3"><strong>Estado SUNAT/OSE</strong><br><span class="label label-warning"><?= esc($comprobante->sunat_estado) ?></span></div>
+            </div>
+            <hr>
+            <?php if (!empty($comprobante->id_com)): ?>
+              <div class="row">
+                <div class="col-md-12">
+                  <strong>Pago / comprobante interno</strong><br>
+                  <a href="<?= base_url('tratamiento/imprimirComprobante/' . $comprobante->id_com) ?>" target="_blank">
+                    Ver comprobante de pago #<?= esc($comprobante->id_com) ?>
+                  </a>
+                </div>
+              </div>
+              <hr>
+            <?php endif; ?>
+            <div class="row">
+              <div class="col-md-4"><strong>Cliente</strong><br><?= esc($comprobante->razon_social_cliente) ?></div>
+              <div class="col-md-3"><strong>Documento</strong><br><?= esc($comprobante->numero_documento_cliente) ?></div>
+              <div class="col-md-5"><strong>Direccion</strong><br><?= esc($comprobante->direccion_cliente) ?></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="box">
+          <div class="box-body">
+            <div class="table-responsive">
+              <table class="table table-bordered">
+                <thead>
+                  <tr>
+                    <th>Descripcion</th>
+                    <th style="width: 12%;">Cantidad</th>
+                    <th style="width: 15%;">Valor unit.</th>
+                    <th style="width: 15%;">Precio inc. IGV</th>
+                    <th style="width: 15%;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ($comprobante->detalle as $item): ?>
+                    <tr>
+                      <td><?= esc($item->descripcion) ?></td>
+                      <td class="text-right"><?= esc(number_format((float) $item->cantidad, 2)) ?></td>
+                      <td class="text-right"><?= esc(number_format((float) $item->valor_unitario, 2)) ?></td>
+                      <td class="text-right"><?= esc(number_format((float) $item->precio_unitario, 2)) ?></td>
+                      <td class="text-right"><?= esc(number_format((float) $item->total, 2)) ?></td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+                <tfoot>
+                  <tr><th colspan="4" class="text-right">Op. gravada</th><th class="text-right"><?= esc(number_format((float) $comprobante->op_gravada, 2)) ?></th></tr>
+                  <tr><th colspan="4" class="text-right">IGV</th><th class="text-right"><?= esc(number_format((float) $comprobante->igv, 2)) ?></th></tr>
+                  <tr><th colspan="4" class="text-right">Total</th><th class="text-right"><?= esc(number_format((float) $comprobante->total, 2)) ?></th></tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <?php if (!empty($comprobante->xml_hash)): ?>
+              <p><strong>Hash XML:</strong> <?= esc($comprobante->xml_hash) ?></p>
+            <?php endif; ?>
+            <?php if (!empty($comprobante->sunat_mensaje)): ?>
+              <p><strong>Respuesta SUNAT:</strong> <?= esc($comprobante->sunat_mensaje) ?></p>
+            <?php endif; ?>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>

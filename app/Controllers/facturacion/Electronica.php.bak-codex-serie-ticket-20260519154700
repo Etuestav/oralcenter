@@ -1,0 +1,932 @@
+<?php
+
+namespace App\Controllers\Facturacion;
+
+use App\Controllers\BaseController;
+use App\Models\FacturacionConfigModel;
+use App\Models\FacturacionElectronicaModel;
+use App\Models\ModelGeneral;
+use DOMDocument;
+use SoapClient;
+use SoapFault;
+use ZipArchive;
+
+class Electronica extends BaseController
+{
+    protected FacturacionElectronicaModel $facturacionModel;
+    protected FacturacionConfigModel $configModel;
+    protected ModelGeneral $modelGeneral;
+
+    public function __construct()
+    {
+        $this->facturacionModel = new FacturacionElectronicaModel();
+        $this->configModel = new FacturacionConfigModel();
+        $this->modelGeneral = new ModelGeneral();
+    }
+
+    public function index()
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $filtros = [
+            'desde'            => $this->request->getGet('desde'),
+            'hasta'            => $this->request->getGet('hasta'),
+            'cliente'          => $this->request->getGet('cliente'),
+            'tipo_comprobante' => $this->request->getGet('tipo_comprobante'),
+        ];
+
+        $data = [
+            'comprobantes' => $this->facturacionModel->listar($filtros),
+            'filtros'      => $filtros,
+        ];
+
+        return view('layouts/header')
+            . view('layouts/aside')
+            . view('admin/facturacion/electronica/panel', $data)
+            . view('layouts/footer');
+    }
+
+    public function nuevo()
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $data = [
+            'pacientes' => $this->modelGeneral->getTable('paciente'),
+        ];
+
+        return view('layouts/header')
+            . view('layouts/aside')
+            . view('admin/facturacion/electronica/nuevo', $data)
+            . view('layouts/footer');
+    }
+
+    public function guardar()
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $rules = [
+            'tipo_comprobante'          => 'required|in_list[01,03]',
+            'serie'                     => 'required',
+            'fecha_emision'             => 'required',
+            'tipo_documento_cliente'    => 'required',
+            'numero_documento_cliente'  => 'required',
+            'razon_social_cliente'      => 'required',
+            'descripcion.*'             => 'required',
+            'cantidad.*'                => 'required',
+            'precio_unitario.*'         => 'required',
+        ];
+
+        if (!$this->validate($rules)) {
+            session()->setFlashdata('error', 'Debe completar los datos obligatorios.');
+
+            return redirect()->back()->withInput();
+        }
+
+        $tipoComprobante = $this->request->getPost('tipo_comprobante');
+        $serie = strtoupper((string) $this->request->getPost('serie'));
+        $correlativo = $this->facturacionModel->siguienteCorrelativo($tipoComprobante, $serie);
+        $detalle = $this->prepararDetalle();
+        $totales = $this->calcularTotales($detalle);
+
+        $cabecera = [
+            'tipo_comprobante'         => $tipoComprobante,
+            'serie'                    => $serie,
+            'correlativo'              => $correlativo,
+            'fecha_emision'            => $this->request->getPost('fecha_emision'),
+            'hora_emision'             => date('H:i:s'),
+            'moneda'                   => $this->request->getPost('moneda') ?: 'PEN',
+            'codi_pac'                 => $this->request->getPost('codi_pac') ?: null,
+            'tipo_documento_cliente'   => $this->request->getPost('tipo_documento_cliente'),
+            'numero_documento_cliente' => $this->request->getPost('numero_documento_cliente'),
+            'razon_social_cliente'     => $this->request->getPost('razon_social_cliente'),
+            'direccion_cliente'        => $this->request->getPost('direccion_cliente'),
+            'op_gravada'               => $totales['op_gravada'],
+            'igv'                      => $totales['igv'],
+            'total'                    => $totales['total'],
+            'estado'                   => 'registrado',
+            'sunat_estado'             => 'pendiente',
+        ];
+
+        $id = $this->facturacionModel->registrar($cabecera, $detalle);
+
+        session()->setFlashdata('success', 'Comprobante registrado correctamente.');
+
+        return redirect()->to(base_url('facturacion/electronica/ver/' . $id));
+    }
+
+    public function ver(int $id)
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $comprobante = $this->facturacionModel->obtener($id);
+
+        if (!$comprobante) {
+            throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound('Comprobante no encontrado');
+        }
+
+        return view('layouts/header')
+            . view('layouts/aside')
+            . view('admin/facturacion/electronica/ver', ['comprobante' => $comprobante])
+            . view('layouts/footer');
+    }
+
+    public function desdeComprobante(int $idCom)
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $idFacturacion = $this->facturacionModel->registrarDesdeComprobante($idCom);
+
+        if ($idFacturacion === null) {
+            session()->setFlashdata('error', 'Solo se puede generar CPE desde comprobantes tipo Factura o Boleta.');
+
+            return redirect()->to(base_url('tratamiento/comprobante'));
+        }
+
+        session()->setFlashdata('success', 'Comprobante electronico vinculado al pago.');
+
+        return redirect()->to(base_url('facturacion/electronica/ver/' . $idFacturacion));
+    }
+
+    public function generarXml(int $id)
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $comprobante = $this->facturacionModel->obtener($id);
+
+        if (!$comprobante) {
+            throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound('Comprobante no encontrado');
+        }
+
+        $config = $this->configModel->obtener() ?? $this->configDesdeClinica();
+        $xml = $this->construirXml($comprobante);
+        $dir = WRITEPATH . 'facturacion/xml/';
+
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+
+        $nombre = $this->nombreSunat($comprobante, $config) . '.xml';
+        $path = $dir . $nombre;
+
+        file_put_contents($path, $xml);
+
+        $this->facturacionModel->actualizarXml($id, $path, hash('sha256', $xml));
+
+        session()->setFlashdata('success', 'XML generado. Aun falta firma digital y envio a SUNAT/OSE.');
+
+        return redirect()->to(base_url('facturacion/electronica/ver/' . $id));
+    }
+
+    public function imprimirTicket(int $id)
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $comprobante = $this->facturacionModel->obtener($id);
+
+        if (!$comprobante) {
+            throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound('Comprobante no encontrado');
+        }
+
+        return view('admin/facturacion/electronica/ticket', [
+            'comprobante' => $comprobante,
+            'config' => $this->configModel->obtener() ?? $this->configDesdeClinica(),
+        ]);
+    }
+    public function descargarXml(int $id)
+    {
+        $comprobante = $this->facturacionModel->obtener($id);
+
+        if (!$comprobante || empty($comprobante->xml_path) || !is_file($comprobante->xml_path)) {
+            throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound('XML no encontrado');
+        }
+
+        return $this->response->download($comprobante->xml_path, null);
+    }
+
+    public function configuracion()
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $config = $this->configModel->obtener() ?? $this->configDesdeClinica();
+
+        return view('layouts/header')
+            . view('layouts/aside')
+            . view('admin/facturacion/electronica/configuracion', ['config' => $config])
+            . view('layouts/footer');
+    }
+
+    public function guardarConfiguracion()
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $rules = [
+            'ruc_emisor'   => 'required|min_length[11]|max_length[11]',
+            'razon_social' => 'required',
+            'modo'         => 'required|in_list[beta,produccion]',
+        ];
+
+        if (!$this->validate($rules)) {
+            session()->setFlashdata('error', 'Debe completar los datos obligatorios de SUNAT.');
+
+            return redirect()->back()->withInput();
+        }
+
+        $actual = $this->configModel->obtener();
+
+        $data = [
+            'ruc_emisor'        => $this->request->getPost('ruc_emisor'),
+            'razon_social'      => $this->request->getPost('razon_social'),
+            'nombre_comercial'  => $this->request->getPost('nombre_comercial'),
+            'ubigeo'            => $this->request->getPost('ubigeo'),
+            'direccion'         => $this->request->getPost('direccion'),
+            'departamento'      => $this->request->getPost('departamento'),
+            'provincia'         => $this->request->getPost('provincia'),
+            'distrito'          => $this->request->getPost('distrito'),
+            'modo'              => $this->request->getPost('modo'),
+            'sol_usuario'       => $this->request->getPost('sol_usuario'),
+            'sol_clave'         => $this->request->getPost('sol_clave') ?: ($actual->sol_clave ?? null),
+            'certificado_clave' => $this->request->getPost('certificado_clave') ?: ($actual->certificado_clave ?? null),
+        ];
+
+        $certificado = $this->request->getFile('certificado');
+
+        if ($certificado && $certificado->isValid() && !$certificado->hasMoved()) {
+            $extension = strtolower($certificado->getClientExtension());
+
+            if (!in_array($extension, ['pfx', 'p12'], true)) {
+                session()->setFlashdata('error', 'El certificado debe ser un archivo .pfx o .p12.');
+
+                return redirect()->back()->withInput();
+            }
+
+            $dir = WRITEPATH . 'facturacion/certificados/';
+
+            if (!is_dir($dir)) {
+                mkdir($dir, 0777, true);
+            }
+
+            $nombre = 'certificado-' . date('YmdHis') . '.' . $extension;
+            $certificado->move($dir, $nombre);
+
+            $data['certificado_path'] = $dir . $nombre;
+            $data['certificado_nombre'] = $certificado->getClientName();
+        }
+
+        $this->configModel->guardar($data);
+
+        session()->setFlashdata('success', 'Configuracion de facturacion guardada.');
+
+        return redirect()->to(base_url('facturacion/electronica/configuracion'));
+    }
+
+    public function firmarXml(int $id)
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $comprobante = $this->facturacionModel->obtener($id);
+        $config = $this->configModel->obtener();
+
+        if (!$comprobante || empty($comprobante->xml_path) || !is_file($comprobante->xml_path)) {
+            session()->setFlashdata('error', 'Primero debe generar el XML.');
+
+            return redirect()->to(base_url('facturacion/electronica/ver/' . $id));
+        }
+
+        if (!$config || empty($config->certificado_path) || empty($config->certificado_clave)) {
+            session()->setFlashdata('error', 'Debe configurar el certificado digital antes de firmar.');
+
+            return redirect()->to(base_url('facturacion/electronica/configuracion'));
+        }
+
+        $xmlFirmado = $this->firmarDocumentoXml(
+            file_get_contents($comprobante->xml_path),
+            $config->certificado_path,
+            $config->certificado_clave
+        );
+
+        if ($xmlFirmado === null) {
+            session()->setFlashdata('error', 'No se pudo firmar el XML. Revise el certificado y su clave.');
+
+            return redirect()->to(base_url('facturacion/electronica/ver/' . $id));
+        }
+
+        file_put_contents($comprobante->xml_path, $xmlFirmado);
+
+        $this->facturacionModel->update($id, [
+            'estado'       => 'xml_firmado',
+            'sunat_estado' => 'pendiente_envio',
+            'xml_hash'     => hash('sha256', $xmlFirmado),
+        ]);
+
+        session()->setFlashdata('success', 'XML firmado correctamente.');
+
+        return redirect()->to(base_url('facturacion/electronica/ver/' . $id));
+    }
+
+    public function enviarSunat(int $id)
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $comprobante = $this->facturacionModel->obtener($id);
+        $config = $this->configModel->obtener() ?? $this->configDesdeClinica();
+
+        if (!$comprobante || empty($comprobante->xml_path) || !is_file($comprobante->xml_path)) {
+            session()->setFlashdata('error', 'Primero debe generar y firmar el XML.');
+
+            return redirect()->to(base_url('facturacion/electronica/ver/' . $id));
+        }
+
+        if (!class_exists(SoapClient::class) || !class_exists(ZipArchive::class)) {
+            session()->setFlashdata('error', 'El servidor necesita las extensiones SOAP y ZIP de PHP para enviar a SUNAT.');
+
+            return redirect()->to(base_url('facturacion/electronica/ver/' . $id));
+        }
+
+        $ruc = preg_replace('/\D+/', '', (string) ($config->ruc_emisor ?? ''));
+        $usuarioSol = trim((string) ($config->sol_usuario ?? ''));
+        $claveSol = trim((string) ($config->sol_clave ?? ''));
+
+        if (strlen($ruc) !== 11 || $usuarioSol === '' || $claveSol === '') {
+            session()->setFlashdata('error', 'Complete RUC, usuario SOL y clave SOL en la configuracion de facturacion.');
+
+            return redirect()->to(base_url('facturacion/electronica/configuracion'));
+        }
+
+        $baseName = $this->nombreSunat($comprobante, $config);
+        $zipPath = $this->crearZipSunat($comprobante->xml_path, $baseName);
+
+        if ($zipPath === null) {
+            session()->setFlashdata('error', 'No se pudo preparar el ZIP para SUNAT.');
+
+            return redirect()->to(base_url('facturacion/electronica/ver/' . $id));
+        }
+
+        $endpoint = (($config->modo ?? 'beta') === 'produccion')
+            ? 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService'
+            : 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService';
+
+        try {
+            $client = new SoapClient($endpoint . '?wsdl', [
+                'cache_wsdl' => WSDL_CACHE_NONE,
+                'trace' => false,
+                'exceptions' => true,
+                'connection_timeout' => 30,
+            ]);
+            $client->__setLocation($endpoint);
+            $client->__setSoapHeaders([
+                $this->sunatSecurityHeader($ruc . $usuarioSol, $claveSol),
+            ]);
+
+            $response = $client->__soapCall('sendBill', [[
+                'fileName' => $baseName . '.zip',
+                'contentFile' => file_get_contents($zipPath),
+            ]]);
+
+            $cdrContent = $response->applicationResponse ?? null;
+
+            if (empty($cdrContent)) {
+                throw new \RuntimeException('SUNAT no devolvio CDR para el comprobante.');
+            }
+
+            $cdrPath = $this->guardarCdr($baseName, $cdrContent);
+            $mensaje = $this->leerMensajeCdr($cdrPath) ?: 'CDR recibido por SUNAT.';
+            $aceptado = stripos($mensaje, 'aceptad') !== false;
+
+            $this->facturacionModel->update($id, [
+                'estado' => 'enviado_sunat',
+                'sunat_estado' => $aceptado ? 'aceptado' : 'enviado',
+                'cdr_path' => $cdrPath,
+                'sunat_mensaje' => $mensaje,
+            ]);
+
+            session()->setFlashdata('success', $mensaje);
+        } catch (SoapFault|\Throwable $e) {
+            $mensaje = $e->getMessage();
+            $this->facturacionModel->update($id, [
+                'sunat_estado' => 'rechazado',
+                'sunat_mensaje' => $mensaje,
+            ]);
+
+            session()->setFlashdata('error', 'SUNAT rechazo o no recibio el comprobante: ' . $mensaje);
+        }
+
+        return redirect()->to(base_url('facturacion/electronica/ver/' . $id));
+    }
+
+    public function reenvioMasivoSunat()
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $pendientes = $this->facturacionModel->pendientesSunat(50);
+        $enviados = 0;
+        $fallidos = 0;
+        $sinXml = 0;
+        $mensajes = [];
+
+        foreach ($pendientes as $comprobante) {
+            if (empty($comprobante->xml_path) || !is_file($comprobante->xml_path)) {
+                $sinXml++;
+                continue;
+            }
+
+            $resultado = $this->procesarEnvioSunat($comprobante);
+
+            if ($resultado['ok']) {
+                $enviados++;
+            } else {
+                $fallidos++;
+            }
+
+            if (!empty($resultado['mensaje'])) {
+                $mensajes[] = $comprobante->serie . '-' . str_pad((string) $comprobante->correlativo, 8, '0', STR_PAD_LEFT) . ': ' . $resultado['mensaje'];
+            }
+        }
+
+        if ($enviados > 0) {
+            session()->setFlashdata('success', 'Reenvio masivo terminado. Enviados: ' . $enviados . ', fallidos: ' . $fallidos . ', sin XML: ' . $sinXml . '.');
+        } else {
+            session()->setFlashdata('error', 'No se pudo reenviar ningun documento. Fallidos: ' . $fallidos . ', sin XML: ' . $sinXml . '.');
+        }
+
+        if (!empty($mensajes)) {
+            session()->setFlashdata('sunat_detalle', implode("\n", array_slice($mensajes, 0, 10)));
+        }
+
+        return redirect()->to(base_url('facturacion/electronica'));
+    }
+    public function descargarCdr(int $id)
+    {
+        $comprobante = $this->facturacionModel->obtener($id);
+
+        if (!$comprobante || empty($comprobante->cdr_path) || !is_file($comprobante->cdr_path)) {
+            throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound('CDR no encontrado');
+        }
+
+        return $this->response->download($comprobante->cdr_path, null);
+    }
+
+    public function sunatStatus()
+    {
+        if (!session()->get('login')) {
+            return redirect()->to(base_url(''));
+        }
+
+        $config = $this->configModel->obtener() ?? $this->configDesdeClinica();
+        $ruc = preg_replace('/\D+/', '', (string) ($config->ruc_emisor ?? ''));
+
+        return $this->response->setJSON([
+            'ruc_configurado' => strlen($ruc) === 11,
+            'modo' => $config->modo ?? 'beta',
+            'usuario_sol' => !empty($config->sol_usuario),
+            'clave_sol' => !empty($config->sol_clave),
+            'certificado' => !empty($config->certificado_path) && is_file($config->certificado_path),
+            'extension_soap' => class_exists(SoapClient::class),
+            'extension_zip' => class_exists(ZipArchive::class),
+            'extension_openssl' => extension_loaded('openssl'),
+        ]);
+    }
+    public function getPaciente(int $id)
+    {
+        $paciente = $this->modelGeneral->getTableWhereRow('paciente', ['codi_pac' => $id]);
+
+        return $this->response->setJSON($paciente);
+    }
+
+    private function procesarEnvioSunat(object $comprobante): array
+    {
+        $config = $this->configModel->obtener() ?? $this->configDesdeClinica();
+
+        if (empty($comprobante->xml_path) || !is_file($comprobante->xml_path)) {
+            return ['ok' => false, 'mensaje' => 'XML no encontrado.'];
+        }
+
+        if (!class_exists(SoapClient::class) || !class_exists(ZipArchive::class)) {
+            return ['ok' => false, 'mensaje' => 'Faltan extensiones SOAP o ZIP en PHP.'];
+        }
+
+        $ruc = preg_replace('/\D+/', '', (string) ($config->ruc_emisor ?? ''));
+        $usuarioSol = trim((string) ($config->sol_usuario ?? ''));
+        $claveSol = trim((string) ($config->sol_clave ?? ''));
+
+        if (strlen($ruc) !== 11 || $usuarioSol === '' || $claveSol === '') {
+            return ['ok' => false, 'mensaje' => 'Complete RUC, usuario SOL y clave SOL.'];
+        }
+
+        $baseName = $this->nombreSunat($comprobante, $config);
+        $zipPath = $this->crearZipSunat($comprobante->xml_path, $baseName);
+
+        if ($zipPath === null) {
+            return ['ok' => false, 'mensaje' => 'No se pudo preparar ZIP para SUNAT.'];
+        }
+
+        $endpoint = (($config->modo ?? 'beta') === 'produccion')
+            ? 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService'
+            : 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService';
+
+        try {
+            $client = new SoapClient($endpoint . '?wsdl', [
+                'cache_wsdl' => WSDL_CACHE_NONE,
+                'trace' => false,
+                'exceptions' => true,
+                'connection_timeout' => 30,
+            ]);
+            $client->__setLocation($endpoint);
+            $client->__setSoapHeaders([
+                $this->sunatSecurityHeader($ruc . $usuarioSol, $claveSol),
+            ]);
+
+            $response = $client->__soapCall('sendBill', [[
+                'fileName' => $baseName . '.zip',
+                'contentFile' => file_get_contents($zipPath),
+            ]]);
+
+            $cdrContent = $response->applicationResponse ?? null;
+
+            if (empty($cdrContent)) {
+                throw new \RuntimeException('SUNAT no devolvio CDR.');
+            }
+
+            $cdrPath = $this->guardarCdr($baseName, $cdrContent);
+            $mensaje = $this->leerMensajeCdr($cdrPath) ?: 'CDR recibido por SUNAT.';
+            $aceptado = stripos($mensaje, 'aceptad') !== false;
+
+            $this->facturacionModel->update($comprobante->id_facturacion, [
+                'estado' => 'enviado_sunat',
+                'sunat_estado' => $aceptado ? 'aceptado' : 'enviado',
+                'cdr_path' => $cdrPath,
+                'sunat_mensaje' => $mensaje,
+            ]);
+
+            return ['ok' => true, 'mensaje' => $mensaje];
+        } catch (SoapFault|\Throwable $e) {
+            $mensaje = $e->getMessage();
+            $this->facturacionModel->update($comprobante->id_facturacion, [
+                'sunat_estado' => 'rechazado',
+                'sunat_mensaje' => $mensaje,
+            ]);
+
+            return ['ok' => false, 'mensaje' => $mensaje];
+        }
+    }
+    private function nombreSunat(object $comprobante, object $config): string
+    {
+        $ruc = preg_replace('/\D+/', '', (string) ($config->ruc_emisor ?? '00000000000'));
+        $numero = str_pad((string) $comprobante->correlativo, 8, '0', STR_PAD_LEFT);
+
+        return $ruc . '-' . $comprobante->tipo_comprobante . '-' . strtoupper((string) $comprobante->serie) . '-' . $numero;
+    }
+
+    private function crearZipSunat(string $xmlPath, string $baseName): ?string
+    {
+        if (!is_file($xmlPath)) {
+            return null;
+        }
+
+        $dir = WRITEPATH . 'facturacion/envio/';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+
+        $zipPath = $dir . $baseName . '.zip';
+        $zip = new ZipArchive();
+        if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            return null;
+        }
+
+        $zip->addFile($xmlPath, $baseName . '.xml');
+        $zip->close();
+
+        return $zipPath;
+    }
+
+    private function sunatSecurityHeader(string $username, string $password): \SoapHeader
+    {
+        $xml = '<wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">'
+            . '<wsse:UsernameToken><wsse:Username>' . htmlspecialchars($username, ENT_XML1) . '</wsse:Username>'
+            . '<wsse:Password>' . htmlspecialchars($password, ENT_XML1) . '</wsse:Password></wsse:UsernameToken></wsse:Security>';
+
+        return new \SoapHeader('http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd', 'Security', new \SoapVar($xml, XSD_ANYXML), true);
+    }
+
+    private function guardarCdr(string $baseName, string $cdrContent): string
+    {
+        $dir = WRITEPATH . 'facturacion/cdr/';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+
+        $path = $dir . 'R-' . $baseName . '.zip';
+        file_put_contents($path, $cdrContent);
+
+        return $path;
+    }
+
+    private function leerMensajeCdr(string $cdrZipPath): string
+    {
+        if (!is_file($cdrZipPath) || !class_exists(ZipArchive::class)) {
+            return '';
+        }
+
+        $zip = new ZipArchive();
+        if ($zip->open($cdrZipPath) !== true) {
+            return '';
+        }
+
+        $xml = '';
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = $zip->getNameIndex($i);
+            if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) === 'xml') {
+                $xml = (string) $zip->getFromIndex($i);
+                break;
+            }
+        }
+        $zip->close();
+
+        if ($xml === '') {
+            return '';
+        }
+
+        $doc = new DOMDocument();
+        $previous = libxml_use_internal_errors(true);
+        if (!$doc->loadXML($xml)) {
+            libxml_use_internal_errors($previous);
+            return '';
+        }
+        libxml_use_internal_errors($previous);
+
+        $nodes = $doc->getElementsByTagName('Description');
+
+        return $nodes->length > 0 ? trim((string) $nodes->item(0)->nodeValue) : '';
+    }
+    private function prepararDetalle(): array
+    {
+        $descripciones = $this->request->getPost('descripcion') ?? [];
+        $cantidades = $this->request->getPost('cantidad') ?? [];
+        $precios = $this->request->getPost('precio_unitario') ?? [];
+        $codigos = $this->request->getPost('codigo_producto') ?? [];
+
+        $detalle = [];
+
+        foreach ($descripciones as $index => $descripcion) {
+            $cantidad = round((float) ($cantidades[$index] ?? 0), 2);
+            $precioUnitario = round((float) ($precios[$index] ?? 0), 2);
+            $total = round($cantidad * $precioUnitario, 2);
+            $valorUnitario = round($precioUnitario / 1.18, 2);
+            $igv = round($total - ($total / 1.18), 2);
+
+            if ($descripcion === '' || $cantidad <= 0 || $precioUnitario <= 0) {
+                continue;
+            }
+
+            $detalle[] = [
+                'codigo_producto' => $codigos[$index] ?? null,
+                'descripcion'     => $descripcion,
+                'unidad'          => 'NIU',
+                'cantidad'        => $cantidad,
+                'valor_unitario'  => $valorUnitario,
+                'precio_unitario' => $precioUnitario,
+                'igv'             => $igv,
+                'total'           => $total,
+            ];
+        }
+
+        return $detalle;
+    }
+
+    private function calcularTotales(array $detalle): array
+    {
+        $total = array_reduce($detalle, static fn ($carry, $item) => $carry + (float) $item['total'], 0.0);
+        $opGravada = round($total / 1.18, 2);
+        $igv = round($total - $opGravada, 2);
+
+        return [
+            'op_gravada' => $opGravada,
+            'igv'        => $igv,
+            'total'      => round($total, 2),
+        ];
+    }
+
+    private function construirXml(object $comprobante): string
+    {
+        $config = $this->configModel->obtener()
+            ?? $this->configDesdeClinica();
+
+        $doc = new DOMDocument('1.0', 'UTF-8');
+        $doc->formatOutput = true;
+
+        $invoice = $doc->createElementNS('urn:oasis:names:specification:ubl:schema:xsd:Invoice-2', 'Invoice');
+        $invoice->setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:cac', 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2');
+        $invoice->setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:cbc', 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2');
+        $invoice->setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:ext', 'urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2');
+        $doc->appendChild($invoice);
+
+        $this->appendText($doc, $invoice, 'cbc:UBLVersionID', '2.1');
+        $this->appendText($doc, $invoice, 'cbc:CustomizationID', '2.0');
+        $this->appendText($doc, $invoice, 'cbc:ID', $comprobante->serie . '-' . $comprobante->correlativo);
+        $this->appendText($doc, $invoice, 'cbc:IssueDate', $comprobante->fecha_emision);
+        $this->appendText($doc, $invoice, 'cbc:IssueTime', $comprobante->hora_emision ?: '00:00:00');
+        $this->appendText($doc, $invoice, 'cbc:InvoiceTypeCode', $comprobante->tipo_comprobante);
+        $this->appendText($doc, $invoice, 'cbc:DocumentCurrencyCode', $comprobante->moneda);
+
+        $supplier = $doc->createElement('cac:AccountingSupplierParty');
+        $party = $doc->createElement('cac:Party');
+        $identification = $doc->createElement('cac:PartyIdentification');
+        $id = $doc->createElement('cbc:ID', $config->ruc_emisor ?? '00000000000');
+        $id->setAttribute('schemeID', '6');
+        $identification->appendChild($id);
+        $party->appendChild($identification);
+        $name = $doc->createElement('cac:PartyLegalEntity');
+        $this->appendText($doc, $name, 'cbc:RegistrationName', $config->razon_social ?? 'EMPRESA SIN CONFIGURAR');
+        $party->appendChild($name);
+        $supplier->appendChild($party);
+        $invoice->appendChild($supplier);
+
+        $customer = $doc->createElement('cac:AccountingCustomerParty');
+        $customerParty = $doc->createElement('cac:Party');
+        $customerIdentification = $doc->createElement('cac:PartyIdentification');
+        $customerId = $doc->createElement('cbc:ID', $comprobante->numero_documento_cliente);
+        $customerId->setAttribute('schemeID', $comprobante->tipo_documento_cliente);
+        $customerIdentification->appendChild($customerId);
+        $customerParty->appendChild($customerIdentification);
+        $customerName = $doc->createElement('cac:PartyLegalEntity');
+        $this->appendText($doc, $customerName, 'cbc:RegistrationName', $comprobante->razon_social_cliente);
+        $customerParty->appendChild($customerName);
+        $customer->appendChild($customerParty);
+        $invoice->appendChild($customer);
+
+        $taxTotal = $doc->createElement('cac:TaxTotal');
+        $taxAmount = $doc->createElement('cbc:TaxAmount', number_format((float) $comprobante->igv, 2, '.', ''));
+        $taxAmount->setAttribute('currencyID', $comprobante->moneda);
+        $taxTotal->appendChild($taxAmount);
+        $invoice->appendChild($taxTotal);
+
+        $legalTotal = $doc->createElement('cac:LegalMonetaryTotal');
+        $payable = $doc->createElement('cbc:PayableAmount', number_format((float) $comprobante->total, 2, '.', ''));
+        $payable->setAttribute('currencyID', $comprobante->moneda);
+        $legalTotal->appendChild($payable);
+        $invoice->appendChild($legalTotal);
+
+        foreach ($comprobante->detalle as $index => $item) {
+            $line = $doc->createElement('cac:InvoiceLine');
+            $this->appendText($doc, $line, 'cbc:ID', (string) ($index + 1));
+            $quantity = $doc->createElement('cbc:InvoicedQuantity', number_format((float) $item->cantidad, 2, '.', ''));
+            $quantity->setAttribute('unitCode', $item->unidad);
+            $line->appendChild($quantity);
+            $lineAmount = $doc->createElement('cbc:LineExtensionAmount', number_format(((float) $item->total / 1.18), 2, '.', ''));
+            $lineAmount->setAttribute('currencyID', $comprobante->moneda);
+            $line->appendChild($lineAmount);
+            $lineItem = $doc->createElement('cac:Item');
+            $this->appendText($doc, $lineItem, 'cbc:Description', $item->descripcion);
+            $line->appendChild($lineItem);
+            $price = $doc->createElement('cac:Price');
+            $priceAmount = $doc->createElement('cbc:PriceAmount', number_format((float) $item->valor_unitario, 2, '.', ''));
+            $priceAmount->setAttribute('currencyID', $comprobante->moneda);
+            $price->appendChild($priceAmount);
+            $line->appendChild($price);
+            $invoice->appendChild($line);
+        }
+
+        return $doc->saveXML();
+    }
+
+    private function appendText(DOMDocument $doc, \DOMNode $parent, string $name, string $value): void
+    {
+        $parent->appendChild($doc->createElement($name, htmlspecialchars($value, ENT_XML1 | ENT_COMPAT, 'UTF-8')));
+    }
+
+    private function configDesdeClinica(): object
+    {
+        $clinica = $this->modelGeneral->getTableWhereRow('clinica');
+
+        return (object) [
+            'ruc_emisor'   => $clinica->ruc_clin ?? '00000000000',
+            'razon_social' => $clinica->razon_social ?? $clinica->nombre_clin ?? 'EMPRESA SIN CONFIGURAR',
+            'nombre_comercial' => $clinica->nombre_clin ?? null,
+            'modo' => 'beta',
+        ];
+    }
+
+    private function firmarDocumentoXml(string $xml, string $certificadoPath, string $clave): ?string
+    {
+        if (!is_file($certificadoPath)) {
+            return null;
+        }
+
+        $certificado = file_get_contents($certificadoPath);
+        $certs = [];
+
+        if (!openssl_pkcs12_read($certificado, $certs, $clave)) {
+            return null;
+        }
+
+        $doc = new DOMDocument('1.0', 'UTF-8');
+        $doc->preserveWhiteSpace = false;
+        $doc->formatOutput = true;
+        $doc->loadXML($xml);
+
+        $root = $doc->documentElement;
+        $extensionContent = $this->asegurarExtensionFirma($doc);
+        $canonicalData = $root->C14N(true, false);
+        $digestValue = base64_encode(hash('sha256', $canonicalData, true));
+
+        $signedInfo = $doc->createElementNS('http://www.w3.org/2000/09/xmldsig#', 'ds:SignedInfo');
+        $canonicalization = $doc->createElement('ds:CanonicalizationMethod');
+        $canonicalization->setAttribute('Algorithm', 'http://www.w3.org/2001/10/xml-exc-c14n#');
+        $signedInfo->appendChild($canonicalization);
+
+        $signatureMethod = $doc->createElement('ds:SignatureMethod');
+        $signatureMethod->setAttribute('Algorithm', 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256');
+        $signedInfo->appendChild($signatureMethod);
+
+        $reference = $doc->createElement('ds:Reference');
+        $reference->setAttribute('URI', '');
+        $transforms = $doc->createElement('ds:Transforms');
+        $transform = $doc->createElement('ds:Transform');
+        $transform->setAttribute('Algorithm', 'http://www.w3.org/2000/09/xmldsig#enveloped-signature');
+        $transforms->appendChild($transform);
+        $reference->appendChild($transforms);
+        $digestMethod = $doc->createElement('ds:DigestMethod');
+        $digestMethod->setAttribute('Algorithm', 'http://www.w3.org/2001/04/xmlenc#sha256');
+        $reference->appendChild($digestMethod);
+        $reference->appendChild($doc->createElement('ds:DigestValue', $digestValue));
+        $signedInfo->appendChild($reference);
+
+        $signature = '';
+
+        if (!openssl_sign($signedInfo->C14N(true, false), $signature, $certs['pkey'], OPENSSL_ALGO_SHA256)) {
+            return null;
+        }
+
+        $signatureNode = $doc->createElementNS('http://www.w3.org/2000/09/xmldsig#', 'ds:Signature');
+        $signatureNode->setAttribute('Id', 'SignatureSP');
+        $signatureNode->appendChild($signedInfo);
+        $signatureNode->appendChild($doc->createElement('ds:SignatureValue', base64_encode($signature)));
+
+        $keyInfo = $doc->createElement('ds:KeyInfo');
+        $x509Data = $doc->createElement('ds:X509Data');
+        $x509Certificate = preg_replace('/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s+/', '', $certs['cert']);
+        $x509Data->appendChild($doc->createElement('ds:X509Certificate', $x509Certificate));
+        $keyInfo->appendChild($x509Data);
+        $signatureNode->appendChild($keyInfo);
+
+        $extensionContent->appendChild($signatureNode);
+
+        return $doc->saveXML();
+    }
+
+    private function asegurarExtensionFirma(DOMDocument $doc): \DOMElement
+    {
+        $root = $doc->documentElement;
+        $xpath = new \DOMXPath($doc);
+        $xpath->registerNamespace('ext', 'urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2');
+
+        $content = $xpath->query('//ext:UBLExtensions/ext:UBLExtension/ext:ExtensionContent')->item(0);
+
+        if ($content instanceof \DOMElement) {
+            while ($content->firstChild) {
+                $content->removeChild($content->firstChild);
+            }
+
+            return $content;
+        }
+
+        $extensions = $doc->createElementNS('urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2', 'ext:UBLExtensions');
+        $extension = $doc->createElementNS('urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2', 'ext:UBLExtension');
+        $content = $doc->createElementNS('urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2', 'ext:ExtensionContent');
+
+        $extension->appendChild($content);
+        $extensions->appendChild($extension);
+
+        if ($root->firstChild) {
+            $root->insertBefore($extensions, $root->firstChild);
+        } else {
+            $root->appendChild($extensions);
+        }
+
+        return $content;
+    }
+}

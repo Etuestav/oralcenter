@@ -1,0 +1,255 @@
+<?php
+
+namespace App\Models;
+
+use CodeIgniter\Model;
+
+class FacturacionElectronicaModel extends Model
+{
+    protected $table      = 'facturacion_electronica';
+    protected $primaryKey = 'id_facturacion';
+    protected $returnType = 'object';
+    protected $useTimestamps = true;
+
+    protected $allowedFields = [
+        'id_com',
+        'tipo_comprobante',
+        'serie',
+        'correlativo',
+        'fecha_emision',
+        'hora_emision',
+        'moneda',
+        'codi_pac',
+        'tipo_documento_cliente',
+        'numero_documento_cliente',
+        'razon_social_cliente',
+        'direccion_cliente',
+        'op_gravada',
+        'igv',
+        'total',
+        'estado',
+        'sunat_estado',
+        'xml_path',
+        'xml_hash',
+        'cdr_path',
+        'sunat_mensaje',
+    ];
+
+    public function listar(array $filtros = []): array
+    {
+        $builder = $this->select('
+                facturacion_electronica.*,
+                paciente.nomb_pac,
+                paciente.apel_pac,
+                comprobante.id_com,
+                comprobante.serie_com,
+                comprobante.secuencia_com
+            ')
+            ->join('paciente', 'facturacion_electronica.codi_pac = paciente.codi_pac', 'left')
+            ->join('comprobante', 'facturacion_electronica.id_com = comprobante.id_com', 'left');
+
+        if (!empty($filtros['desde'])) {
+            $builder->where('fecha_emision >=', $filtros['desde']);
+        }
+
+        if (!empty($filtros['hasta'])) {
+            $builder->where('fecha_emision <=', $filtros['hasta']);
+        }
+
+        if (!empty($filtros['cliente'])) {
+            $builder->groupStart()
+                ->like('razon_social_cliente', $filtros['cliente'])
+                ->orLike('numero_documento_cliente', $filtros['cliente'])
+                ->groupEnd();
+        }
+
+        if (!empty($filtros['tipo_comprobante'])) {
+            $builder->where('tipo_comprobante', $filtros['tipo_comprobante']);
+        }
+
+        return $builder->orderBy('id_facturacion', 'DESC')
+            ->findAll();
+    }
+
+    public function obtener(int|string $id): ?object
+    {
+        $comprobante = $this->where('id_facturacion', $id)->first();
+
+        if (!$comprobante) {
+            return null;
+        }
+
+        $comprobante->detalle = $this->db->table('facturacion_electronica_detalle')
+            ->where('id_facturacion', $id)
+            ->orderBy('id_facturacion_detalle', 'ASC')
+            ->get()
+            ->getResult();
+
+        return $comprobante;
+    }
+
+    public function siguienteCorrelativo(string $tipoComprobante, string $serie): int
+    {
+        $row = $this->selectMax('correlativo')
+            ->where('tipo_comprobante', $tipoComprobante)
+            ->where('serie', $serie)
+            ->first();
+
+        return ((int) ($row->correlativo ?? 0)) + 1;
+    }
+
+    public function registrar(array $cabecera, array $detalle): int
+    {
+        $this->db->transStart();
+
+        $this->insert($cabecera);
+        $id = (int) $this->getInsertID();
+
+        foreach ($detalle as $item) {
+            $item['id_facturacion'] = $id;
+            $this->db->table('facturacion_electronica_detalle')->insert($item);
+        }
+
+        $this->db->transComplete();
+
+        return $id;
+    }
+
+    public function actualizarXml(int|string $id, string $path, string $hash): bool
+    {
+        return $this->update($id, [
+            'xml_path'     => $path,
+            'xml_hash'     => $hash,
+            'estado'       => 'xml_generado',
+            'sunat_estado' => 'pendiente_envio',
+        ]);
+    }
+
+    public function obtenerPorComprobante(int|string $idCom): ?object
+    {
+        return $this->where('id_com', $idCom)->first();
+    }
+
+    public function registrarDesdeComprobante(int|string $idCom): ?int
+    {
+        $existente = $this->obtenerPorComprobante($idCom);
+
+        if ($existente) {
+            return (int) $existente->id_facturacion;
+        }
+
+        $comprobante = $this->obtenerComprobanteInterno($idCom);
+
+        if (!$comprobante) {
+            return null;
+        }
+
+        $tipoComprobante = $this->tipoComprobanteSunat($comprobante);
+
+        if ($tipoComprobante === null) {
+            return null;
+        }
+
+        $serie = strtoupper((string) $comprobante->serie_com);
+        $correlativo = (int) ltrim((string) $comprobante->secuencia_com, '0');
+        $correlativo = $correlativo > 0
+            ? $correlativo
+            : $this->siguienteCorrelativo($tipoComprobante, $serie);
+
+        $existentePorNumero = $this->where('tipo_comprobante', $tipoComprobante)
+            ->where('serie', $serie)
+            ->where('correlativo', $correlativo)
+            ->first();
+
+        if ($existentePorNumero) {
+            if (empty($existentePorNumero->id_com)) {
+                $this->update($existentePorNumero->id_facturacion, ['id_com' => $idCom]);
+            }
+
+            return (int) $existentePorNumero->id_facturacion;
+        }
+
+        $total = round((float) ($comprobante->total_comp ?? 0), 2);
+        $opGravada = round($total / 1.18, 2);
+        $igv = round($total - $opGravada, 2);
+        $cliente = trim(($comprobante->nomb_pac ?? '') . ' ' . ($comprobante->apel_pac ?? ''));
+
+        $cabecera = [
+            'id_com'                    => $idCom,
+            'tipo_comprobante'          => $tipoComprobante,
+            'serie'                     => $serie,
+            'correlativo'               => $correlativo,
+            'fecha_emision'             => $comprobante->fecha_com ?? date('Y-m-d'),
+            'hora_emision'              => date('H:i:s'),
+            'moneda'                    => 'PEN',
+            'codi_pac'                  => $comprobante->codi_pac ?? null,
+            'tipo_documento_cliente'    => $tipoComprobante === '01' ? '6' : '1',
+            'numero_documento_cliente'  => $tipoComprobante === '01'
+                ? (string) ($comprobante->ruc_pac ?? $comprobante->dni_pac ?? '00000000')
+                : (string) ($comprobante->dni_pac ?? '00000000'),
+            'razon_social_cliente'      => $cliente !== '' ? $cliente : 'CLIENTE VARIOS',
+            'direccion_cliente'         => $comprobante->dire_pac ?? null,
+            'op_gravada'                => $opGravada,
+            'igv'                       => $igv,
+            'total'                     => $total,
+            'estado'                    => 'registrado',
+            'sunat_estado'              => 'pendiente',
+        ];
+
+        $detalle = [[
+            'codigo_producto' => 'TRAT-' . $comprobante->codi_tra,
+            'descripcion'     => 'Pago de tratamiento: ' . ($comprobante->asunto_tra ?? ('Tratamiento #' . $comprobante->codi_tra)),
+            'unidad'          => 'NIU',
+            'cantidad'        => 1,
+            'valor_unitario'  => $opGravada,
+            'precio_unitario' => $total,
+            'igv'             => $igv,
+            'total'           => $total,
+        ]];
+
+        return $this->registrar($cabecera, $detalle);
+    }
+
+    private function obtenerComprobanteInterno(int|string $idCom): ?object
+    {
+        return $this->db->table('comprobante')
+            ->select('
+                comprobante.*,
+                tipo_documento.descripcion,
+                tipo_documento.abreviatura,
+                tratamiento.codi_tra,
+                tratamiento.asunto_tra,
+                tratamiento.codi_pac,
+                paciente.nomb_pac,
+                paciente.apel_pac,
+                paciente.dni_pac,
+                paciente.dire_pac
+            ')
+            ->join('tipo_documento', 'comprobante.cod_tipodocumento = tipo_documento.cod_tipodocumento', 'left')
+            ->join('pago_comprobante', 'comprobante.id_com = pago_comprobante.id_com', 'left')
+            ->join('pago', 'pago_comprobante.id_pago = pago.id_pago', 'left')
+            ->join('tratamiento', 'pago.codi_tra = tratamiento.codi_tra', 'left')
+            ->join('paciente', 'tratamiento.codi_pac = paciente.codi_pac', 'left')
+            ->where('comprobante.id_com', $idCom)
+            ->groupBy('comprobante.id_com')
+            ->get()
+            ->getRow();
+    }
+
+    private function tipoComprobanteSunat(object $comprobante): ?string
+    {
+        $descripcion = strtoupper((string) ($comprobante->descripcion ?? ''));
+        $abreviatura = strtoupper((string) ($comprobante->abreviatura ?? ''));
+        $texto = $descripcion . ' ' . $abreviatura;
+
+        if (str_contains($texto, 'FACTURA')) {
+            return '01';
+        }
+
+        if (str_contains($texto, 'BOLETA')) {
+            return '03';
+        }
+
+        return null;
+    }
+}
