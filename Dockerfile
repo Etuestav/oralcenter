@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y \
 # Instalar Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Habilitar mod_rewrite para CodeIgniter
-RUN a2enmod rewrite
+# Deshabilitar MPM prefork por defecto y habilitar rewrite
+RUN a2dismod mpm_prefork && a2enmod mpm_prefork && a2enmod rewrite
 
 # Configurar Apache para servir desde /public
 RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available/000-default.conf
